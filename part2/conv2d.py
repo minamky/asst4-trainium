@@ -142,7 +142,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 temp += nl.matmul(w_slice, x_slice)
                     
                     #temp = nl.copy(temp, dtype=output_tile[:, out_row, :].dtype)
-                    temp += bias_new[cout, :, :]
+                    temp = nl.add(temp, bias_new[cout, :, :])
                     output_tile[:, out_row, :] = temp
                                         
                 #output_tile = nl.copy(output_tile, dtype=X_out[img, cout * 128 : cout * 128 + 128, :, :].dtype)
