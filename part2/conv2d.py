@@ -68,7 +68,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    c_out_pmax = 128
 
    n_tiles_c_in = in_channels // 128
-   n_tiles_c_out = out_channels // 128 # because cout can't be too large so we need to divide in tiles
+   n_tiles_c_out = out_channels // 128 
 
    
    #preloading form
@@ -108,7 +108,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    
 
    # Handle output row tiling for large images
-   output_tile_height = 2
+   output_tile_height = 1
    input_tile_height = output_tile_height + filter_height - 1
    
    n_tiles_h = out_height // output_tile_height
@@ -139,6 +139,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                             for cin in nl.affine_range(n_tiles_c_in):
                                 w_slice = w_new[kh, kw, cout, cin, :, :]
                                 x_slice = X_tile[cin, :, out_row + kh, kw : kw + out_width]
+                                
                                 # Perform matrix multiplication and accumulate in PSUM
                                 temp += nl.matmul(w_slice, x_slice)
                                 #temp = nl.add(temp, nl.matmul(w_slice, x_slice))
