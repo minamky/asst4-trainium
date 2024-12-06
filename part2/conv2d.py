@@ -56,6 +56,13 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    # Can assume one PSUM bank can at least fit one row of the pixels
    assert nl.tile_size.gemm_moving_fmax >= out_width
 
+   # Before Pooling
+   X_intermediate = nl.ndarray(
+       shape=(batch_size, out_channels, out_height, out_width),
+       dtype=X.dtype,
+       buffer=nl.hbm,
+   )
+
    # Initialize output_tile array
    X_out = nl.ndarray(
        shape=(batch_size, out_channels, out_pool_height, out_pool_width),
@@ -127,7 +134,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 
                 #asign space in SBUF to store output_tile
                 output_tile = nl.ndarray(shape=(nl.par_dim(c_out_pmax), output_tile_height, out_width), 
-                    dtype=X_out[img].dtype, 
+                    dtype=X_intermediate[img].dtype, 
                     buffer=nl.sbuf)
                 
                 for out_row in nl.affine_range(output_tile_height):
@@ -154,8 +161,28 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 h_end = h_start + output_tile_height
 
                 nl.store(
-                    X_out[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
+                    X_intermediate[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
                     value=output_tile,
                 )
                 
+        # Max Pooling: works but slow
+        for cout in nl.affine_range(n_tiles_c_out):
+            for pool_h in nl.affine_range(out_pool_height):
+                for pool_w in nl.affine_range(out_pool_width):
+                    
+                    # load in SBUF to perform max operation
+                    pool_tile = nl.ndarray(
+                        shape=(nl.par_dim(c_out_pmax), pool_size, pool_size),
+                        dtype=X_intermediate.dtype,
+                        buffer=nl.sbuf
+                    )
+                    
+                    for ph in nl.affine_range(pool_size):
+                        for pw in nl.affine_range(pool_size):
+                            pool_tile[:, ph, pw] = nl.load(X_intermediate[img, cout * 128: cout * 128 + 128, pool_h * pool_size + ph,  pool_w * pool_size + pw])
+
+                    pool_max = nl.max(pool_tile, axis=(1,2))
+
+                    nl.store(X_out[img, cout * 128: cout * 128 + 128, pool_h, pool_w], 
+                        value=pool_max)
    return X_out
