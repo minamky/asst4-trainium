@@ -99,7 +99,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    bias_new = nl.ndarray(
        shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), out_width),
        dtype=bias.dtype,
-       buffer=nl.psum
+       buffer=nl.sbuf
    )
    for cout in nl.affine_range(n_tiles_c_out):
         bias_slice = nl.load(bias[cout * 128 : cout * 128 + 128])
