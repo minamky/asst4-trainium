@@ -78,6 +78,16 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    n_tiles_c_out = out_channels // 128 
 
    
+   bias_new = nl.ndarray(
+       shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), out_width),
+       dtype=bias.dtype,
+       buffer=nl.sbuf
+   )
+    # load bias
+   for cout in nl.affine_range(n_tiles_c_out):
+        bias_slice = nl.load(bias[cout * 128 : cout * 128 + 128])
+        bias_new[cout, :, :] = bias_slice
+   
    #preloading form
    w_old = nl.ndarray(
        shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), n_tiles_c_in, 128, filter_height, filter_width),
@@ -90,17 +100,13 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
        dtype=W.dtype,
        buffer=nl.sbuf
    )
-   
-   bias_new = nl.ndarray(
-       shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), out_width),
-       dtype=bias.dtype,
+
+   w_new2 = nl.ndarray(
+       shape=(filter_height, filter_width, n_tiles_c_out, n_tiles_c_in, nl.par_dim(c_in_pmax), c_out_pmax),
+       dtype=W.dtype,
        buffer=nl.sbuf
    )
-    # load bias
-   for cout in nl.affine_range(n_tiles_c_out):
-        bias_slice = nl.load(bias[cout * 128 : cout * 128 + 128])
-        bias_new[cout, :, :] = bias_slice
-   
+
    # load weights
    for cout in nl.affine_range(n_tiles_c_out):         
         for cin in nl.affine_range(n_tiles_c_in):
@@ -112,6 +118,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             for cout in nl.affine_range(n_tiles_c_out):
                 for cin in nl.affine_range(n_tiles_c_in):
                     w_new[kh, kw, cout, cin] = nl.copy(w_old[cout, :, cin, :, kh, kw])
+                    w_new2[kh, kw, cout, cin] = nisa.nc_transpose(w_new[kh, kw, cout, cin])
    
 
    # Handle output row tiling for large images
@@ -144,11 +151,11 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     for kh in nl.affine_range(filter_height):
                         for kw in nl.affine_range(filter_width):
                             for cin in nl.affine_range(n_tiles_c_in):
-                                w_slice = w_new[kh, kw, cout, cin, :, :]
+                                w_slice = w_new2[kh, kw, cout, cin, :, :]
                                 x_slice = X_tile[cin, :, out_row + kh, kw : kw + out_width]
                                 
                                 # Perform matrix multiplication and accumulate in PSUM
-                                temp += nl.matmul(w_slice, x_slice)
+                                temp += nl.matmul(w_slice, x_slice, transpose_x=True)
                                 #temp = nl.add(temp, nl.matmul(w_slice, x_slice))
                     
                     #temp = nl.copy(temp, dtype=output_tile[:, out_row, :].dtype)
@@ -163,9 +170,8 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 nl.store(
                     X_intermediate[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
                     value=output_tile,
-                )
-                
-        # Max Pooling: works but slow
+                )     
+        # max pooling time yayyy
         for cout in nl.affine_range(n_tiles_c_out):
             for pool_h in nl.affine_range(out_pool_height):
                 for pool_w in nl.affine_range(out_pool_width):
