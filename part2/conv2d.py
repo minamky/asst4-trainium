@@ -83,28 +83,30 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
        dtype=W.dtype,
        buffer=nl.sbuf
    )
-    # load W part
+   
+   bias_new = nl.ndarray(
+       shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), out_width),
+       dtype=bias.dtype,
+       buffer=nl.sbuf
+   )
+    # load bias
    for cout in nl.affine_range(n_tiles_c_out):
+        bias_slice = nl.load(bias[cout * 128 : cout * 128 + 128])
+        for w in nl.affine_range(out_width):
+            bias_new[cout, :, w] = bias_slice
+   
+   # load weights
+   for cout in nl.affine_range(n_tiles_c_out):         
         for cin in nl.affine_range(n_tiles_c_in):
             w_old[cout, :, cin, :, :, :] = nl.load(W[cout * 128: cout * 128 + 128, cin * 128 : cin * 128 + 128, :, :])
 
-   # transpose part
+   # transpose weights
    for kh in nl.affine_range(filter_height):
         for kw in nl.affine_range(filter_width):
             for cout in nl.affine_range(n_tiles_c_out):
                 for cin in nl.affine_range(n_tiles_c_in):
                     w_new[kh, kw, cout, cin] = nl.copy(w_old[cout, :, cin, :, kh, kw])
    
-   # load bias
-   bias_new = nl.ndarray(
-       shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), out_width),
-       dtype=bias.dtype,
-       buffer=nl.sbuf
-   )
-   for cout in nl.affine_range(n_tiles_c_out):
-        bias_slice = nl.load(bias[cout * 128 : cout * 128 + 128])
-        for w in nl.affine_range(out_width):
-            bias_new[cout, :, w] = bias_slice
 
    # Handle output row tiling for large images
    output_tile_height = 2
