@@ -92,8 +92,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     # load bias
    for cout in nl.affine_range(n_tiles_c_out):
         bias_slice = nl.load(bias[cout * 128 : cout * 128 + 128])
-        for w in nl.affine_range(out_width):
-            bias_new[cout, :, w] = bias_slice
+        bias_new[cout, :, :] = bias_slice
    
    # load weights
    for cout in nl.affine_range(n_tiles_c_out):         
@@ -142,6 +141,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 x_slice = X_tile[cin, :, out_row + kh, kw : kw + out_width]
                                 # Perform matrix multiplication and accumulate in PSUM
                                 temp += nl.matmul(w_slice, x_slice)
+                                #temp = nl.add(temp, nl.matmul(w_slice, x_slice))
                     
                     #temp = nl.copy(temp, dtype=output_tile[:, out_row, :].dtype)
                     temp = nl.add(temp, bias_new[cout, :, :])
