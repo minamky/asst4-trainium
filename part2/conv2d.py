@@ -30,7 +30,7 @@ out_width = input_width - filter_width + 1
 out_pool_height = out_height // pool_size
 out_pool_width = out_width // pool_size
 
-The shape of the output should be [batch_size, out_channels, out_pool_height, out_pool_width]
+The shape of the output_tile should be [batch_size, out_channels, out_pool_height, out_pool_width]
 
 """
 @nki.jit
@@ -56,7 +56,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    # Can assume one PSUM bank can at least fit one row of the pixels
    assert nl.tile_size.gemm_moving_fmax >= out_width
 
-   # Initialize output array
+   # Initialize output_tile array
    X_out = nl.ndarray(
        shape=(batch_size, out_channels, out_pool_height, out_pool_width),
        dtype=X.dtype,
@@ -64,13 +64,13 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    )
 
    # Various tiling dimensions (You may want to define more of them)
-
    c_in_pmax = 128
    c_out_pmax = 128
 
    n_tiles_c_in = in_channels // 128
    n_tiles_c_out = out_channels // 128 # because cout can't be too large so we need to divide in tiles
 
+   
    #preloading form
    w_old = nl.ndarray(
        shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), n_tiles_c_in, 128, filter_height, filter_width),
@@ -95,37 +95,54 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 for cin in nl.affine_range(n_tiles_c_in):
                     w_new[kh, kw, cout, cin] = nl.copy(w_old[cout, :, cin, :, kh, kw])
                     
+   # Handle input tiling for large images
+   output_tile_height = 1
+   input_tile_height = output_tile_height + filter_height - 1
+   
+   n_tiles_h = out_height // output_tile_height
+
    for img in nl.affine_range(batch_size):
-        #assign space in SBUF to store entire image, call it x
-        X_img = nl.ndarray(shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), input_height, input_width), 
-            dtype=X[img].dtype, 
-            buffer=nl.sbuf)
-        
-        for cin in nl.affine_range(n_tiles_c_in):
-            X_img[cin, :, :, :] = nl.load(X[img, cin * 128: cin * 128 + 128, :, :])            
-        
-        for cout in nl.affine_range(n_tiles_c_out):
-            #asign space in SBUF to store output
-            output = nl.ndarray(shape=(nl.par_dim(c_out_pmax), out_height, out_width), 
-                dtype=X_out[img].dtype, 
+    
+        for tile_h in nl.affine_range(n_tiles_h):
+            h_start = tile_h * output_tile_height
+            h_end = h_start + output_tile_height
+
+            #assign space in SBUF to store image tile, call it x
+            X_tile = nl.ndarray(shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), input_tile_height, input_width), 
+                dtype=X[img].dtype, 
                 buffer=nl.sbuf)
 
-            for out_row in nl.affine_range(out_height):
-                # assign space in PSUM to store output row
-                temp = nl.zeros((nl.par_dim(c_out_pmax), out_width), nl.float32, buffer=nl.psum)
+            for cin in nl.affine_range(n_tiles_c_in):
+                X_tile[cin, :, :, :] = nl.load(X[img, cin * 128: cin * 128 + 128, tile_h * output_tile_height: tile_h * output_tile_height + input_tile_height, :])            
             
-                for kh in nl.affine_range(filter_height):
-                    for kw in nl.affine_range(filter_width):
-                        for cin in nl.affine_range(n_tiles_c_in):
-                            w_slice = w_new[kh, kw, cout, cin, :, :]
-                            x_slice = X_img[cin, :, out_row + kh, kw : kw + out_width]
-                            # Perform matrix multiplication and accumulate in PSUM
-                            temp += nl.matmul(w_slice, x_slice)
+            for cout in nl.affine_range(n_tiles_c_out):
                 
-                #temp = nl.copy(temp, dtype=output[:, out_row, :].dtype)
-                output[:, out_row, :] = temp
-            
-            #output = nl.copy(output, dtype=X_out[img, cout * 128 : cout * 128 + 128, :, :].dtype)
-            nl.store(X_out[img, cout * 128 : cout * 128 + 128, :, :], value=output)
+                #asign space in SBUF to store output_tile
+                output_tile = nl.ndarray(shape=(nl.par_dim(c_out_pmax), output_tile_height, out_width), 
+                    dtype=X_out[img].dtype, 
+                    buffer=nl.sbuf)
+                
+                for out_row in nl.affine_range(output_tile_height):
+                    #assign space in PSUM to store output_tile row
+                    temp = nl.zeros((nl.par_dim(c_out_pmax), out_width), nl.float32, buffer=nl.psum)
+                
+                    for kh in nl.affine_range(filter_height):
+                        for kw in nl.affine_range(filter_width):
+                            for cin in nl.affine_range(n_tiles_c_in):
+                                w_slice = w_new[kh, kw, cout, cin, :, :]
+                                x_slice = X_tile[cin, :, out_row + kh, kw : kw + out_width]
+                                # Perform matrix multiplication and accumulate in PSUM
+                                temp += nl.matmul(w_slice, x_slice)
+                    
+                    #temp = nl.copy(temp, dtype=output_tile[:, out_row, :].dtype)
+                    output_tile[:, out_row, :] = temp
+                                        
+                #output_tile = nl.copy(output_tile, dtype=X_out[img, cout * 128 : cout * 128 + 128, :, :].dtype)
+                #nl.store(X_out[img, cout * 128 : cout * 128 + 128, :, :], value=output_tile)
 
+                nl.store(
+                    X_out[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
+                    value=output_tile,
+                )
+                
    return X_out
