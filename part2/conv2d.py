@@ -56,13 +56,6 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    # Can assume one PSUM bank can at least fit one row of the pixels
    assert nl.tile_size.gemm_moving_fmax >= out_width
 
-   # Before Pooling
-   X_intermediate = nl.ndarray(
-       shape=(batch_size, out_channels, out_height, out_width),
-       dtype=X.dtype,
-       buffer=nl.hbm,
-   )
-
    # Initialize output_tile array
    X_out = nl.ndarray(
        shape=(batch_size, out_channels, out_pool_height, out_pool_width),
@@ -129,7 +122,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
    for img in nl.affine_range(batch_size):
         for tile_h in nl.affine_range(n_tiles_h):
-            #assign space in SBUF to store image row tile, call it x
+            # assign space in SBUF to store image row tile
             X_tile = nl.ndarray(shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), input_tile_height, input_width), 
                 dtype=X[img].dtype, 
                 buffer=nl.sbuf)
@@ -139,13 +132,13 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             
             for cout in nl.affine_range(n_tiles_c_out):
                 
-                #asign space in SBUF to store output_tile
+                # asign space in SBUF to store output_tile
                 output_tile = nl.ndarray(shape=(nl.par_dim(c_out_pmax), output_tile_height, out_width), 
-                    dtype=X_intermediate[img].dtype, 
+                    dtype=X_out[img].dtype, 
                     buffer=nl.sbuf)
                 
                 for out_row in nl.affine_range(output_tile_height):
-                    #assign space in PSUM to store output_tile row
+                    # assign space in PSUM to store output_tile row
                     temp = nl.zeros((nl.par_dim(c_out_pmax), out_width), nl.float32, buffer=nl.psum)
                 
                     for kh in nl.affine_range(filter_height):
@@ -156,7 +149,6 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 
                                 # Perform matrix multiplication and accumulate in PSUM
                                 temp += nl.matmul(w_slice, x_slice, transpose_x=True)
-                                #temp = nl.add(temp, nl.matmul(w_slice, x_slice))
                     
                     temp = nl.add(temp, bias_new[cout, :, :])
                     output_tile[:, out_row, :] = temp
