@@ -122,7 +122,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
    
 
    # Handle output row tiling for large images
-   output_tile_height = 1
+   output_tile_height = 2
    input_tile_height = output_tile_height + filter_height - 1
    
    n_tiles_h = out_height // output_tile_height
@@ -158,37 +158,33 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 temp += nl.matmul(w_slice, x_slice, transpose_x=True)
                                 #temp = nl.add(temp, nl.matmul(w_slice, x_slice))
                     
-                    #temp = nl.copy(temp, dtype=output_tile[:, out_row, :].dtype)
                     temp = nl.add(temp, bias_new[cout, :, :])
                     output_tile[:, out_row, :] = temp
-                                        
-                #output_tile = nl.copy(output_tile, dtype=X_out[img, cout * 128 : cout * 128 + 128, :, :].dtype)
 
-                h_start = tile_h * output_tile_height
-                h_end = h_start + output_tile_height
+                if pool_size > 1:                    
+                    sz_p, sz_hin, sz_win = output_tile.shape
 
-                nl.store(
-                    X_intermediate[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
-                    value=output_tile,
-                )     
-        # max pooling time yayyy
-        for cout in nl.affine_range(n_tiles_c_out):
-            for pool_h in nl.affine_range(out_pool_height):
-                for pool_w in nl.affine_range(out_pool_width):
-                    
-                    # load in SBUF to perform max operation
-                    pool_tile = nl.ndarray(
-                        shape=(nl.par_dim(c_out_pmax), pool_size, pool_size),
-                        dtype=X_intermediate.dtype,
-                        buffer=nl.sbuf
+                    # output_tile 
+                    i_0 = nl.arange(sz_p)[:, None, None, None, None] #
+                    i_1 = nl.arange(sz_hin//pool_size)[None, :, None, None, None] # y_outer
+                    i_2 = nl.arange(pool_size)[None, None, :, None, None] # y_inner
+                    i_3 = nl.arange(sz_win//pool_size)[None, None, None, :, None] # x_outer
+                    i_4 = nl.arange(pool_size)[None, None, None, None, :] # x_inner
+
+                    out_tile = nl.max(output_tile[i_0, pool_size*i_1+i_2, pool_size*i_3+i_4], axis=[2,4])
+
+                    h_start = tile_h
+                    h_end = h_start
+
+                    nl.store(
+                        X_out[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
+                        value=out_tile,
                     )
-                    
-                    for ph in nl.affine_range(pool_size):
-                        for pw in nl.affine_range(pool_size):
-                            pool_tile[:, ph, pw] = nl.load(X_intermediate[img, cout * 128: cout * 128 + 128, pool_h * pool_size + ph,  pool_w * pool_size + pw])
-
-                    pool_max = nl.max(pool_tile, axis=(1,2))
-
-                    nl.store(X_out[img, cout * 128: cout * 128 + 128, pool_h, pool_w], 
-                        value=pool_max)
+                else:
+                    h_start = tile_h * output_tile_height
+                    h_end = h_start + output_tile_height
+                    nl.store(
+                        X_out[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
+                        value=output_tile,
+                    )
    return X_out
