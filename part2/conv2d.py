@@ -174,7 +174,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     out_tile = nl.max(output_tile[i_0, pool_size*i_1+i_2, pool_size*i_3+i_4], axis=[2,4])
 
                     h_start = tile_h
-                    h_end = h_start
+                    h_end = h_start + 1
 
                     nl.store(
                         X_out[img, cout * 128: cout * 128 + 128, h_start:h_end , :],
