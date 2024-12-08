@@ -76,10 +76,6 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
        dtype=bias.dtype,
        buffer=nl.sbuf
    )
-    # load bias
-   for cout in nl.affine_range(n_tiles_c_out):
-        bias_slice = nl.load(bias[cout * 128 : cout * 128 + 128])
-        bias_new[cout, :, :] = bias_slice
    
    #preloading form
    w_old = nl.ndarray(
@@ -150,9 +146,11 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 # Perform matrix multiplication and accumulate in PSUM
                                 temp += nl.matmul(w_slice, x_slice, transpose_x=True)
                     
-                    temp = nl.add(temp, bias_new[cout, :, :])
                     output_tile[:, out_row, :] = temp
 
+                bias_tile = nl.load(bias[cout*128:(cout+1) * 128]).reshape((128, 1))
+                output_tile = nisa.tensor_scalar(output_tile, np.add, bias_tile)
+                
                 if pool_size > 1:                    
                     sz_p, sz_hin, sz_win = output_tile.shape
 
