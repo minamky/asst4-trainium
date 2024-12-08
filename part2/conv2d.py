@@ -129,9 +129,9 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 
                 for out_row in nl.affine_range(output_tile_height):
                     # assign space in PSUM to store output_tile row
-                  temp = nl.zeros((nl.par_dim(c_out_pmax), out_width), nl.float32, buffer=nl.psum)
+                   temp = nl.zeros((nl.par_dim(c_out_pmax), out_width), nl.float32, buffer=nl.psum)
                 
-                    for kh in nl.affine_range(filter_height):
+                   for kh in nl.affine_range(filter_height):
                         for kw in nl.affine_range(filter_width):
                             for cin in nl.affine_range(n_tiles_c_in):
                                 w_slice = w_new2[kh, kw, cout, cin, :, :]
@@ -140,7 +140,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 # Perform matrix multiplication and accumulate in PSUM
                                 temp += nl.matmul(w_slice, x_slice, transpose_x=True)
                     
-                    output_tile[:, out_row, :] = temp
+                   output_tile[:, out_row, :] = temp
 
                 bias_tile = nl.load(bias[cout*128:(cout+1) * 128]).reshape((128, 1))
                 output_tile = nisa.tensor_scalar(output_tile, np.add, bias_tile)
